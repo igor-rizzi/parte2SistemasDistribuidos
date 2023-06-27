@@ -1,6 +1,7 @@
 import requests
 import json
 from serialize import custom_jsonify
+from flask import Flask, request, jsonify
 
 # Carregar as informações do arquivo JSON
 with open('vizinhos.json') as file:
@@ -11,11 +12,11 @@ ID = data['id']  # ID do servidor atual
 PORT = data['port']  # Porta do servidor atual
 VIZINHOS = data['vizinhos']  # Vizinhos do servidor atual
 
+# Dicionário para armazenar os vizinhos visitados
+vizinhos_visitados = {}
+
 # Endpoint do servidor para receber as requisições
-from flask import Flask, request, jsonify
-
 app = Flask(__name__)
-
 
 @app.route('/objeto', methods=['GET'])
 def get_objeto():
@@ -26,37 +27,47 @@ def get_objeto():
         return custom_jsonify(objeto)
 
     # Se o objeto não estiver disponível localmente, encaminhar a solicitação para os vizinhos
-    vizinhos_visitados = set()  # Manter o controle dos vizinhos já visitados
+    if not vizinhos_visitados:
+        vizinhos_visitados[ID] = True
+
     fila_vizinhos = []
 
     # Adicionar os vizinhos iniciais à fila
     for vizinho in VIZINHOS:
-        fila_vizinhos.append((vizinho['id'], vizinho['port'], 0))  # (id, porta, nível)
+        vizinho_id = vizinho['id']
+        if vizinho_id not in vizinhos_visitados:
+            fila_vizinhos.append(vizinho_id)
 
     while fila_vizinhos:
-        vizinho_id, vizinho_port, nivel = fila_vizinhos.pop(0)
-
-        # Verificar se já visitamos esse vizinho anteriormente
-        if vizinho_id in vizinhos_visitados:
-            continue
+        vizinho_id = fila_vizinhos.pop(0)
 
         # Marcar o vizinho como visitado
-        vizinhos_visitados.add(vizinho_id)
+        vizinhos_visitados[vizinho_id] = True
 
         # Fazer a solicitação HTTP para o vizinho
+        vizinho_port = get_vizinho_port(vizinho_id)
         response = requests.get(f"http://localhost:{vizinho_port}/objeto?_id={objeto_id}")
 
         # Verificar se o objeto foi encontrado no vizinho
         if response.status_code == 200:
             return response.json()
 
-        # Adicionar os vizinhos do vizinho atual à fila (apenas se o nível não exceder um limite pré-definido)
-        if nivel < 2:
-            for vizinho in data['vizinhos']:
-                fila_vizinhos.append((vizinho['id'], vizinho['port'], nivel + 1))
+        # Adicionar os vizinhos do vizinho atual à fila
+        for vizinho in VIZINHOS:
+            vizinho_id = vizinho['id']
+            if vizinho_id not in vizinhos_visitados:
+                fila_vizinhos.append(vizinho_id)
 
     # Se nenhum vizinho possuir o objeto, retornar uma resposta de objeto não encontrado
     return jsonify({'message': 'Objeto não encontrado'})
+
+# Função para obter a porta do vizinho com base no ID
+def get_vizinho_port(vizinho_id):
+    for vizinho in VIZINHOS:
+        if vizinho['id'] == vizinho_id:
+            return vizinho['port']
+
+    return None
 
 
 from pymongo import MongoClient

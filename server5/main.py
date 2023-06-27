@@ -69,8 +69,8 @@ def get_vizinho_port(vizinho_id):
 
     return None
 
-
 from pymongo import MongoClient
+
 # Função para buscar o objeto localmente no banco de dados
 def buscar_objeto_localmente(objeto_id):
     client = MongoClient(data["mongo_uri"])
@@ -79,7 +79,6 @@ def buscar_objeto_localmente(objeto_id):
     resultado = collection.find_one({"_id": objeto_id})
     client.close()
     return resultado
-
 
 
 if __name__ == '__main__':
