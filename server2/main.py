@@ -1,86 +1,45 @@
-import requests
-import json
+from typing import Union
 from serialize import custom_jsonify
 from flask import Flask, request, jsonify
+from pymongo import MongoClient
+import requests
+import json
 
-# Carregar as informações do arquivo JSON
-with open('vizinhos.json') as file:
-    data = json.load(file)
-
-# Configurações do servidor
-ID = data['id']  # ID do servidor atual
-PORT = data['port']  # Porta do servidor atual
-VIZINHOS = data['vizinhos']  # Vizinhos do servidor atual
-
-# Dicionário para armazenar os vizinhos visitados
-vizinhos_visitados = {}
-
-# Endpoint do servidor para receber as requisições
 app = Flask(__name__)
 
-@app.route('/objeto', methods=['GET'])
-def get_objeto():
-    objeto_id = request.args.get('_id')
-    objeto = buscar_objeto_localmente(objeto_id)
+with open('vizinhos.json') as json_file:
+    settings = json.load(json_file)
+    myclient = MongoClient(settings['mongo_uri'])
+    mydb = myclient[settings['database']]
+    mycol = mydb["listingsAndReviews"]
 
-    if objeto:
-        return custom_jsonify(objeto)
+@app.route("/")
+def read_root():
+    return jsonify(settings)
 
-    # Se o objeto não estiver disponível localmente, encaminhar a solicitação para os vizinhos
-    if not vizinhos_visitados:
-        vizinhos_visitados[ID] = True
+@app.route("/airbnbs/<int:id>")
+def read_airbnbs(id):
+    visited = request.args.get('visited')
+    retorno = mycol.find_one({"_id": str(id)})
+    if retorno:
+        return custom_jsonify(retorno)
+    else:
+        neighbors = settings["vizinhos"]
+        visitedNeighbors = visited.split(',') if visited else []
+        visitedNeighbors.append(str(settings['id']))
+        for neighbor in neighbors:
+            if str(neighbor["id"]) not in visitedNeighbors:
+                visitedNeighbors.append(str(neighbor["id"]))
+                visitedAsString = ','.join(visitedNeighbors)
+                try:
+                    query = f"?visited={visitedAsString}" if len(visitedAsString) > 0 else ''
+                    response = requests.get(f"http://localhost:{neighbor['port']}/airbnbs/{id}{query}").json()
+                    print(response)
+                except:
+                    print("Server not found")
+                if "_id" in response:
+                    return response
+        return {"error": "Airbnb not found"}
 
-    fila_vizinhos = []
-
-    # Adicionar os vizinhos iniciais à fila
-    for vizinho in VIZINHOS:
-        vizinho_id = vizinho['id']
-        if vizinho_id not in vizinhos_visitados:
-            fila_vizinhos.append(vizinho_id)
-
-    while fila_vizinhos:
-        vizinho_id = fila_vizinhos.pop(0)
-
-        # Marcar o vizinho como visitado
-        vizinhos_visitados[vizinho_id] = True
-
-        # Fazer a solicitação HTTP para o vizinho
-        vizinho_port = get_vizinho_port(vizinho_id)
-        response = requests.get(f"http://localhost:{vizinho_port}/objeto?_id={objeto_id}")
-
-        # Verificar se o objeto foi encontrado no vizinho
-        if response.status_code == 200:
-            return response.json()
-
-        # Adicionar os vizinhos do vizinho atual à fila
-        for vizinho in VIZINHOS:
-            vizinho_id = vizinho['id']
-            if vizinho_id not in vizinhos_visitados:
-                fila_vizinhos.append(vizinho_id)
-
-    # Se nenhum vizinho possuir o objeto, retornar uma resposta de objeto não encontrado
-    return jsonify({'message': 'Objeto não encontrado'})
-
-# Função para obter a porta do vizinho com base no ID
-def get_vizinho_port(vizinho_id):
-    for vizinho in VIZINHOS:
-        if vizinho['id'] == vizinho_id:
-            return vizinho['port']
-
-    return None
-
-
-from pymongo import MongoClient
-# Função para buscar o objeto localmente no banco de dados
-def buscar_objeto_localmente(objeto_id):
-    client = MongoClient(data["mongo_uri"])
-    db = client[data["database"]]
-    collection = db["listingsAndReviews"]
-    resultado = collection.find_one({"_id": objeto_id})
-    client.close()
-    return resultado
-
-
-
-if __name__ == '__main__':
-    app.run(port=PORT)
+if __name__ == "__main__":
+    app.run(port= 5002)
